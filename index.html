@@ -8,27 +8,25 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   background: #000;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
+  margin: 0;
   font-family: 'Courier New', monospace;
   user-select: none;
   overflow: hidden;
 }
 .game-wrapper {
-  position: relative;
+  position: absolute;
   width: 720px; height: 544px;
+	  transform-origin: 0 0;
 }
 canvas {
   display: block;
-  image-rendering: auto;
+  image-rendering: pixelated;
+	  image-rendering: crisp-edges;
 }
 .overlay {
   position: absolute; top: 0; left: 0;
   width: 544px; height: 544px;
   display: flex; flex-direction: column;
-  justify-content: center; align-items: center;
   pointer-events: none;
 }
 .overlay.hidden { display: none; }
@@ -101,6 +99,18 @@ const ctx = canvas.getContext('2d');
 canvas.width = CW;
 canvas.height = CH;
 
+// 全屏缩放
+function resizeCanvas() {
+  const ww = window.innerWidth, wh = window.innerHeight;
+  const scale = Math.min(ww / CW, wh / CH);
+  const wrap = document.querySelector('.game-wrapper');
+  wrap.style.left = ((ww - CW * scale) / 2) + 'px';
+  wrap.style.top = ((wh - CH * scale) / 2) + 'px';
+  wrap.style.transform = 'scale(' + scale + ')';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
 // ============================================================
 // 像素调色板
 // ============================================================
@@ -139,6 +149,219 @@ const P = {
   bullet:    '#ffffff',
   bullet2:   '#ffffcc',
 };
+
+// ============================================================
+// 预渲染精灵系统
+// ============================================================
+const sprites = { tiles: {}, tanks: {}, panel: {} };
+
+function createOffscreenCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+}
+
+function R(ctx, x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x | 0, y | 0, w | 0, h | 0);
+}
+
+// 地形 tile 渲染（画到 0,0 原点）
+function renderBrickTile(ctx) {
+  const hs = TILE / 2;
+  R(ctx, 0, 0, TILE, TILE, P.brick1);
+  R(ctx, 1, 1, hs - 2, hs - 2, P.brick2);
+  R(ctx, hs + 1, 1, hs - 2, hs - 2, P.brick3);
+  R(ctx, 1, hs + 1, hs - 2, hs - 2, P.brick4);
+  R(ctx, hs + 1, hs + 1, hs - 2, hs - 2, P.brick2);
+  ctx.fillStyle = P.brick1;
+  ctx.fillRect(0, hs - 1, TILE, 2);
+  ctx.fillRect(hs - 1, 0, 2, TILE);
+  ctx.strokeStyle = P.brick1;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, TILE - 1, TILE - 1);
+}
+
+function renderSteelTile(ctx) {
+  R(ctx, 0, 0, TILE, TILE, P.steel1);
+  R(ctx, 2, 2, TILE - 4, TILE - 4, P.steel2);
+  R(ctx, 4, 4, TILE - 8, TILE - 8, P.steel3);
+  for (const [rx, ry] of [[3,3],[TILE-5,3],[3,TILE-5],[TILE-5,TILE-5]]) {
+    R(ctx, rx, ry, 2, 2, P.steel4);
+    R(ctx, rx, ry, 1, 1, P.steel3);
+  }
+}
+
+function renderBaseTile(ctx) {
+  R(ctx, 0, 0, TILE, TILE, P.midGrey);
+  const eagle = [
+    [0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
+    [0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0],
+    [0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0],
+    [0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0],
+    [0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0],
+    [0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0],
+    [0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0],
+    [0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
+    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0],
+    [0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
+    [0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0],
+    [0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
+    [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
+    [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
+  ];
+  for (let ey = 0; ey < 16; ey++)
+    for (let ex = 0; ex < 16; ex++)
+      if (eagle[ey][ex]) R(ctx, 8 + ex, 3 + ey, 1, 1, P.gold);
+}
+
+function renderTreeTile(ctx) {
+  R(ctx, 0, 0, TILE, TILE, P.tree1);
+  R(ctx, 4, 2, TILE - 8, TILE - 4, P.tree2);
+  R(ctx, 6, 4, TILE - 12, TILE - 8, P.tree3);
+  R(ctx, 3, 3, 3, 4, P.tree2);
+  R(ctx, TILE - 6, 4, 3, 3, P.tree2);
+}
+
+function renderWaterTile(ctx) {
+  R(ctx, 0, 0, TILE, TILE, P.water1);
+  R(ctx, 2, 2, TILE - 4, TILE - 4, P.water2);
+  R(ctx, 6, 5, 14, 2, P.water3);
+  R(ctx, 4, 12, 18, 2, P.water3);
+  R(ctx, 8, 20, 12, 2, P.water3);
+  ctx.strokeStyle = P.water3;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, TILE - 1, TILE - 1);
+}
+
+// 坦克精灵预渲染（UP 方向，画到 32×32 画布，中心在 16,18）
+function renderTankSprite(ctx, c1, c2, tc) {
+  const s = 14;
+  const px = (x, y, w, h) => ctx.fillRect(x | 0, y | 0, w | 0, h | 0);
+  // 履带
+  ctx.fillStyle = tc;
+  px(-s, -s, 5, 28);
+  px(s - 5, -s, 5, 28);
+  // 履带纹理
+  ctx.fillStyle = P.midGrey;
+  for (let i = -s + 4; i < s - 2; i += 5) {
+    px(-s, i, 5, 2);
+    px(s - 5, i, 5, 2);
+  }
+  // 车身
+  ctx.fillStyle = c1;
+  px(-s + 5, -s + 2, 18, 24);
+  ctx.fillStyle = c2;
+  px(-s + 5, -s + 2, 18, 3);
+  px(-s + 5, -s + 2, 3, 24);
+  // 炮塔
+  const tr = s - 6;
+  ctx.fillStyle = c1;
+  px(-tr, -tr, tr * 2, tr * 2);
+  ctx.fillStyle = c2;
+  px(-tr, -tr, tr * 2, 2);
+  px(-tr, -tr, 2, tr * 2);
+  ctx.fillStyle = P.black;
+  px(-1, -1, 2, 2);
+  // 炮管
+  ctx.fillStyle = P.silver;
+  px(-2, -s - 3, 4, s + 5);
+  ctx.fillStyle = P.lightGrey;
+  px(-2, -s - 3, 2, s + 5);
+}
+
+function makeTankSprite(c1, c2, tc) {
+  const c = createOffscreenCanvas(32, 32);
+  const ctx = c.getContext('2d');
+  ctx.translate(16, 18);
+  renderTankSprite(ctx, c1, c2, tc);
+  return { canvas: c, ox: 16, oy: 18 };
+}
+
+// 子弹精灵
+function renderBulletSprite(ctx) {
+  R(ctx, 0, 0, 6, 6, P.bullet);
+  R(ctx, 2, 2, 2, 2, P.bullet2);
+}
+
+// 面板图标
+function renderEnemyIcon(ctx) {
+  const px = (x, y, w, h) => ctx.fillRect(x | 0, y | 0, w | 0, h | 0);
+  ctx.fillStyle = P.red;
+  px(2, 0, 10, 2);
+  px(0, 2, 14, 8);
+  px(1, 10, 12, 4);
+  ctx.fillStyle = P.red2;
+  px(4, 3, 6, 6);
+  px(2, -1, 4, 2);
+  ctx.fillStyle = P.midGrey;
+  px(0, 2, 2, 8);
+  px(12, 2, 2, 8);
+}
+
+function renderLifeIcon(ctx) {
+  const px = (x, y, w, h) => ctx.fillRect(x | 0, y | 0, w | 0, h | 0);
+  ctx.fillStyle = P.green;
+  px(2, 0, 8, 2);
+  px(0, 2, 12, 8);
+  px(1, 9, 10, 5);
+  ctx.fillStyle = P.green2;
+  px(4, 3, 4, 4);
+  px(2, -1, 3, 2);
+}
+
+function initSprites() {
+  // 地形 tiles
+  const t0 = createOffscreenCanvas(TILE, TILE);
+  R(t0.getContext('2d'), 0, 0, TILE, TILE, P.black);
+  sprites.tiles[T_EMPTY] = t0;
+
+  const t1 = createOffscreenCanvas(TILE, TILE);
+  renderBrickTile(t1.getContext('2d'));
+  sprites.tiles[T_BRICK] = t1;
+
+  const t2 = createOffscreenCanvas(TILE, TILE);
+  renderSteelTile(t2.getContext('2d'));
+  sprites.tiles[T_STEEL] = t2;
+
+  const t3 = createOffscreenCanvas(TILE, TILE);
+  renderBaseTile(t3.getContext('2d'));
+  sprites.tiles[T_BASE] = t3;
+
+  const t4 = createOffscreenCanvas(TILE, TILE);
+  renderTreeTile(t4.getContext('2d'));
+  sprites.tiles[T_TREE] = t4;
+
+  const t5 = createOffscreenCanvas(TILE, TILE);
+  renderWaterTile(t5.getContext('2d'));
+  sprites.tiles[T_WATER] = t5;
+
+  // 坦克
+  sprites.tanks.player = makeTankSprite(P.green, P.green2, P.darkGrey);
+  sprites.tanks.enemyNormal = makeTankSprite(P.red, P.red2, P.midGrey);
+  sprites.tanks.enemyFast = makeTankSprite(P.orange, P.orange2, P.midGrey);
+
+  // 子弹
+  const bc = createOffscreenCanvas(6, 6);
+  renderBulletSprite(bc.getContext('2d'));
+  sprites.bullet = bc;
+
+  // 面板图标
+  const ei = createOffscreenCanvas(14, 14);
+  renderEnemyIcon(ei.getContext('2d'));
+  sprites.panel.enemyIcon = ei;
+
+  const ed = createOffscreenCanvas(14, 14);
+  ed.getContext('2d').fillStyle = P.midGrey;
+  ed.getContext('2d').fillRect(0, 0, 14, 14);
+  sprites.panel.enemyDead = ed;
+
+  const li = createOffscreenCanvas(14, 14);
+  renderLifeIcon(li.getContext('2d'));
+  sprites.panel.lifeIcon = li;
+}
 
 // ============================================================
 // 地图数据 — 17×17
@@ -221,7 +444,6 @@ let enemies = [];
 let bullets = [];
 let particles = [];
 let keys = {};
-let frame = 0; // 用于履带动画
 
 // ============================================================
 // DOM 叠层
@@ -277,11 +499,8 @@ class Bullet {
     if (this.x < 0 || this.x > GW || this.y < 0 || this.y > CH) this.alive = false;
   }
   draw(ctx) {
-    const s = 3;
-    ctx.fillStyle = P.bullet;
-    ctx.fillRect(this.x - s | 0, this.y - s | 0, s*2, s*2);
-    ctx.fillStyle = P.bullet2;
-    ctx.fillRect(this.x - 1, this.y - 1, 2, 2);
+    const s = sprites.bullet;
+    ctx.drawImage(s, (this.x - s.width / 2) | 0, (this.y - s.height / 2) | 0);
   }
 }
 
@@ -298,6 +517,7 @@ class Tank {
     this.shootCD = 0;
     this.shootDelay = 30;
     this.invincible = 0;
+    this.sprite = null;
   }
 
   canMoveTo(nx, ny, mapData, allTanks) {
@@ -330,51 +550,11 @@ class Tank {
   }
 
   draw(ctx) {
-    if (!this.alive) return;
+    if (!this.alive || !this.sprite) return;
     ctx.save();
     ctx.translate(this.x | 0, this.y | 0);
-    const a = this.dir * Math.PI / 2;
-    ctx.rotate(a);
-    const s = Math.floor(TANK_SIZE / 2);
-    const px = (x, y, w, h) => ctx.fillRect(x | 0, y | 0, w | 0, h | 0);
-
-    // 履带 — 左右两条
-    ctx.fillStyle = this.tc;
-    px(-s, -s, 5, TANK_SIZE);       // 左履带
-    px(s - 5, -s, 5, TANK_SIZE);    // 右履带
-
-    // 履带纹理段
-    ctx.fillStyle = P.midGrey;
-    for (let i = -s + 4; i < s - 2; i += 5) {
-      px(-s, i, 5, 2);
-      px(s - 5, i + ((frame >> 3) % 5), 5, 2); // 动画偏移
-    }
-
-    // 车身
-    ctx.fillStyle = this.c1;
-    px(-s + 5, -s + 2, TANK_SIZE - 10, TANK_SIZE - 4);
-    // 车身亮面（上方和左侧的像素边）
-    ctx.fillStyle = this.c2;
-    px(-s + 5, -s + 2, TANK_SIZE - 10, 3);
-    px(-s + 5, -s + 2, 3, TANK_SIZE - 4);
-
-    // 炮塔 — 正方形块
-    ctx.fillStyle = this.c1;
-    const tr = s - 6;
-    px(-tr, -tr, tr * 2, tr * 2);
-    ctx.fillStyle = this.c2;
-    px(-tr, -tr, tr * 2, 2);
-    px(-tr, -tr, 2, tr * 2);
-    // 炮塔中心点
-    ctx.fillStyle = P.black;
-    px(-1, -1, 2, 2);
-
-    // 炮管
-    ctx.fillStyle = P.silver;
-    px(-2, -s - 3, 4, s + 5);
-    ctx.fillStyle = P.lightGrey;
-    px(-2, -s - 3, 2, s + 5);
-
+    ctx.rotate(this.dir * Math.PI / 2);
+    ctx.drawImage(this.sprite.canvas, -this.sprite.ox, -this.sprite.oy);
     ctx.restore();
   }
 }
@@ -386,6 +566,7 @@ class PlayerTank extends Tank {
   constructor(x, y) {
     super(x, y, D_UP, P.green, P.green2, P.darkGrey, 2.5);
     this.shootDelay = 16;
+    this.sprite = sprites.tanks.player;
   }
   update(keys, mapData, allTanks) {
     if (this.invincible > 0) this.invincible--;
@@ -423,6 +604,7 @@ class EnemyTank extends Tank {
     const c2 = fast ? P.orange2 : P.red2;
     const spd = (fast ? 2.5 : 1.5) * (1 + (difficulty - 1) * 0.1);
     super(x, y, D_DOWN, c1, c2, P.midGrey, spd);
+    this.sprite = fast ? sprites.tanks.enemyFast : sprites.tanks.enemyNormal;
     this.shootDelay = Math.max(18, 45 - difficulty * 2 + (Math.random() * 20 | 0));
     this.dct = 40 + (Math.random() * 60 | 0);
   }
@@ -646,83 +828,9 @@ function checkVictory() { if (enRemain <= 0 && enOnField <= 0 && gs === ST_PLAY)
 function drawMap() {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      const x = c * TILE, y = r * TILE;
       const t = map[r * COLS + c];
-      const R = (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); };
-
-      if (t === T_EMPTY) {
-        R(x, y, TILE, TILE, P.black);
-      } else if (t === T_BRICK) {
-        R(x, y, TILE, TILE, P.brick1);
-        // 4块小砖 + 砖缝
-        const hs = TILE / 2;
-        R(x + 1, y + 1, hs - 2, hs - 2, P.brick2);
-        R(x + hs + 1, y + 1, hs - 2, hs - 2, P.brick3);
-        R(x + 1, y + hs + 1, hs - 2, hs - 2, P.brick4);
-        R(x + hs + 1, y + hs + 1, hs - 2, hs - 2, P.brick2);
-        // 砖缝
-        ctx.fillStyle = P.brick1;
-        ctx.fillRect(x, y + hs - 1, TILE, 2);
-        ctx.fillRect(x + hs - 1, y, 2, TILE);
-        // 外框
-        ctx.strokeStyle = P.brick1;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
-      } else if (t === T_STEEL) {
-        R(x, y, TILE, TILE, P.steel1);
-        R(x + 2, y + 2, TILE - 4, TILE - 4, P.steel2);
-        R(x + 4, y + 4, TILE - 8, TILE - 8, P.steel3);
-        // 铆钉
-        for (const [rx, ry] of [[3,3],[TILE-5,3],[3,TILE-5],[TILE-5,TILE-5]]) {
-          R(x + rx, y + ry, 2, 2, P.steel4);
-          R(x + rx, y + ry, 1, 1, P.steel3);
-        }
-      } else if (t === T_BASE) {
-        R(x, y, TILE, TILE, P.midGrey);
-        // 像素鹰标
-        const eagle = [
-          [0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0],
-          [0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
-          [0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0],
-          [0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0],
-          [0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0],
-          [0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0],
-          [0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0],
-          [0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0],
-          [0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
-          [0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0],
-          [0,0,1,1,1,1,1,1,1,1,1,1,1,0,0,0],
-          [0,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0],
-          [0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0],
-          [0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0],
-          [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0],
-          [0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
-        ];
-        for (let ey = 3; ey < 3 + 16; ey++) {
-          for (let ex = 8; ex < 8 + 16; ex++) {
-            if (eagle[ey - 3] && eagle[ey - 3][ex - 8]) {
-              R(x + ex, y + ey, 1, 1, P.gold);
-            }
-          }
-        }
-      } else if (t === T_TREE) {
-        R(x, y, TILE, TILE, P.tree1);
-        R(x + 4, y + 2, TILE - 8, TILE - 4, P.tree2);
-        R(x + 6, y + 4, TILE - 12, TILE - 8, P.tree3);
-        R(x + 3, y + 3, 3, 4, P.tree2);
-        R(x + TILE - 6, y + 4, 3, 3, P.tree2);
-      } else if (t === T_WATER) {
-        R(x, y, TILE, TILE, P.water1);
-        R(x + 2, y + 2, TILE - 4, TILE - 4, P.water2);
-        // 波纹
-        R(x + 6, y + 5, 14, 2, P.water3);
-        R(x + 4, y + 12, 18, 2, P.water3);
-        R(x + 8, y + 20, 12, 2, P.water3);
-        R(x, y, TILE, TILE, 'transparent');
-        ctx.strokeStyle = P.water3;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
-      }
+      const s = sprites.tiles[t];
+      if (s) ctx.drawImage(s, c * TILE, r * TILE);
     }
   }
 }
@@ -760,32 +868,16 @@ function drawPanel() {
   ctx.lineTo(px + PW - 16, 72);
   ctx.stroke();
 
-  // 剩余敌人图标 — 两列排列（参考原版）
+  // 剩余敌人图标
   const total = enRemain + enOnField;
-  const iconW = 14, iconH = 14;
   const startX = px + 30, startY = 82;
-  const cols = 2, gapX = 44, gapY = 20;
+  const gapX = 44, gapY = 20;
 
   for (let i = 0; i < 20; i++) {
-    const ci = i % cols, ri = (i / cols) | 0;
+    const ci = i % 2, ri = (i / 2) | 0;
     const ix = startX + ci * gapX, iy = startY + ri * gapY;
-    if (i < total) {
-      // 红色敌人小坦克图标
-      ctx.fillStyle = P.red;
-      ctx.fillRect(ix + 2, iy, 10, 2);
-      ctx.fillRect(ix, iy + 2, 14, 8);
-      ctx.fillRect(ix + 1, iy + 10, 12, 10);
-      ctx.fillStyle = P.red2;
-      ctx.fillRect(ix + 4, iy + 3, 6, 6);
-      ctx.fillRect(ix + 2, iy - 1, 4, 2);
-      ctx.fillStyle = P.midGrey;
-      ctx.fillRect(ix, iy + 2, 2, 8);
-      ctx.fillRect(ix + 12, iy + 2, 2, 8);
-    } else {
-      // 已被消灭 — 暗色轮廓
-      ctx.fillStyle = P.midGrey;
-      ctx.fillRect(ix, iy, 14, 14);
-    }
+    const s = i < total ? sprites.panel.enemyIcon : sprites.panel.enemyDead;
+    ctx.drawImage(s, ix, iy);
   }
 
   // 分隔线
@@ -802,15 +894,7 @@ function drawPanel() {
   ctx.fillText('LIVES', px + PW / 2, lifeY);
 
   for (let i = 0; i < plLives; i++) {
-    const lx = px + 38 + i * 36, ly = lifeY + 10;
-    // 小玩家坦克
-    ctx.fillStyle = P.green;
-    ctx.fillRect(lx + 2, ly, 8, 2);
-    ctx.fillRect(lx, ly + 2, 12, 8);
-    ctx.fillRect(lx + 1, ly + 9, 10, 9);
-    ctx.fillStyle = P.green2;
-    ctx.fillRect(lx + 4, ly + 3, 4, 4);
-    ctx.fillRect(lx + 2, ly - 1, 3, 2);
+    ctx.drawImage(sprites.panel.lifeIcon, px + 38 + i * 36, lifeY + 10);
   }
 
   ctx.textAlign = 'left';
@@ -821,7 +905,6 @@ function drawPanel() {
 // ============================================================
 function gameLoop() {
   requestAnimationFrame(gameLoop);
-  frame++;
 
   if (gs === ST_TITLE) {
     showOL('title');
@@ -932,6 +1015,7 @@ window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; e.pre
 // ============================================================
 // 启动
 // ============================================================
+initSprites();
 initStage(0);
 gs = ST_TITLE;
 showOL('title');
