@@ -33,11 +33,21 @@ Tank (基类: 移动、碰撞检测 canMoveTo、射击 shoot、渲染 draw)
 
 ## 地图系统
 
-- 13×13 网格，每格 32px（`TILE=32`）
-- 地形类型：`TILE_EMPTY=0`, `TILE_BRICK=1`, `TILE_STEEL=2`, `TILE_BASE=3`
+- 17×17 网格，每格 32px（`TILE=32`）。游戏区 GW = 544px，右侧面板 PW = 176px，画布总宽 CW = 720px，高 CH = 544px
+- 地形类型：`T_EMPTY=0`, `T_BRICK=1`, `T_STEEL=2`, `T_BASE=3`, `T_TREE=4`, `T_WATER=5`
+  - 树木(TREE)：坦克可穿过，子弹可穿过（装饰/掩护）
+  - 水域(WATER)：坦克不可穿过，子弹可穿过
 - 地图数据在 `MAPS` 数组中，是一维数组（行优先，`row * COLS + col`）
-- 添加新关卡：在 `MAPS` 数组末尾追加一个 169 个元素的数组即可
-- 基地在最后一行（row=12, col=6），周围必须用砖墙保护
+- 添加新关卡：在 `MAPS` 数组末尾追加一个 289 个元素的数组即可
+- 基地在最后一行（row=16, col=8），周围必须用砖墙保护
+
+## 渲染系统
+
+- 像素艺术风格，使用调色板 `P` 对象（~30种命名颜色，平面色块无渐变）
+- `drawMap()` — 砖墙（4块子砖+砖缝）、钢墙（三层+铆钉）、鹰标（16×16 像素点阵）、树木（绿色块）、水域（蓝色+波纹）
+- `Tank.draw()` — 用 `ctx.translate/rotate` 转向，履带条纹用 `frame` 计数器做交替动画
+- `drawPanel()` — 右侧面板：STAGE 编号、20个敌人图标（红/灰两列）、玩家生命坦克图标
+- 所有渲染在 720×544 Canvas 上完成，无 HTML 侧栏
 
 ## 碰撞检测
 
@@ -52,11 +62,23 @@ Tank (基类: 移动、碰撞检测 canMoveTo、射击 shoot、渲染 draw)
 - `enemies` — EnemyTank 数组
 - `bullets` / `particles` — 每帧 update + filter 清理
 - `keys` — 按键状态对象（keydown 设 true，keyup 设 false）
-- `enemiesRemaining` / `enemiesOnField` — 用于判断胜利条件
+- `enRemain` / `enOnField` — 判断胜利条件（`enRemain <= 0 && enOnField <= 0`）
+- `difficulty` / `stage` — 难度随关卡递增，影响敌方数量、速度、射击频率
+- `frame` — 全局帧计数器，用于履带动画
+
+## 随机关卡生成
+
+`generateRandomMap(diff)` 在预设关卡用尽后调用：
+1. 放置基地 + 砖墙保护环
+2. 散布水域（2+diff 簇，坦克不能过，子弹能过）
+3. 散布树木（4+diff 簇，坦克/子弹都能过）
+4. 砖墙簇（12+diff*4 个），避开出生点和基地区
+5. 钢墙（3+diff 个，单点放置）
+6. BFS 连通性校验（从上三路出生点能否到达底部），失败则移除障碍物重试
 
 ## 敌方 AI 要点
 
-EnemyTank 直接访问全局变量 `player`、`enemies`、`map`（不通过构造函数注入，避免玩家重生后引用过期）。方向变换定时器 `dirChangeTimer` 在撞墙或到期时触发。
+EnemyTank 直接访问全局变量 `player`、`enemies`、`map`（不通过构造函数注入，避免玩家重生后引用过期）。方向变换定时器 `dct` 在撞墙或到期时触发。30%概率生成快速坦克（橙色，速度更快）。当与玩家在同行/列且距离 < 8 格时，会主动朝玩家方向射击。
 
 ## 开发命令
 
